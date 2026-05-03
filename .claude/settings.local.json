@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import composer; print\\('Import OK'\\)\")",
+      "Bash(python generate_submission.py)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

@@ -111,6 +111,29 @@ _SLUG_METRICS = {
     "hardware_stores": {"calls": "order calls",         "views": "store views"},
 }
 
+_CUSTOMER_NOUN = {
+    "dentists":        "patients",
+    "salons":          "clients",
+    "gyms":            "members",
+    "restaurants":     "regulars",
+    "pharmacies":      "patients",
+    "spas":            "clients",
+    "clinics":         "patients",
+    "coaching":        "students",
+    "beauty_parlours": "clients",
+    "diagnostic_labs": "patients",
+}
+
+_CTR_LABEL = {
+    "dentists":    "appointment conversion rate",
+    "pharmacies":  "search-to-call rate",
+    "restaurants": "menu click rate",
+    "salons":      "booking conversion rate",
+    "gyms":        "inquiry conversion rate",
+    "spas":        "booking conversion rate",
+    "clinics":     "appointment conversion rate",
+}
+
 _SOCIAL_PROOF = {
     "dentists": {
         "winback":           "In {locality}, dental practices that run targeted recall campaigns in the first 30-day window see 25-38% reactivation.",
@@ -242,6 +265,14 @@ def _slug_metric(slug, metric):
     return _SLUG_METRICS.get(slug, {}).get(metric, str(metric).replace("_", " "))
 
 
+def _ctr_label(slug):
+    return _CTR_LABEL.get(slug, "click-through rate")
+
+
+def _customer_noun(slug):
+    return _CUSTOMER_NOUN.get(slug, "customers")
+
+
 def _metric_narrative(ms, slug):
     """One-sentence metric story for message bodies: 'X views, Y calls (Z% CTR) — area peers avg P% (Npp gap).'"""
     views = ms.get("views")
@@ -303,16 +334,29 @@ def _pick_cta(pool, merchant_id, kind, no_reply_streak=0):
 
 
 def _cta(scenario, offer=None, locality="", urgency="medium", stage=1, merchant_id="", kind="",
-         no_reply_streak=0, uplift=None):
+         no_reply_streak=0, uplift=None, context=""):
     """Action-forward CTA — frames WHAT WILL HAPPEN, never 'Should I?'."""
     _o = f'"{offer}"' if offer else "a post"
     _l = f" to {locality} searchers" if locality else ""
 
-    if urgency == "high" or stage >= 3:
+    # Scenario-specific pools checked FIRST for cases where consequence > generic urgency
+    if scenario == "compliance":
+        pool = [
+            "Reply CONFIRM to lock it in — lapse recovery takes 5-10 days.",
+            "CONFIRM to process it now before the cutoff.",
+            "On CONFIRM, renewal goes through in 30 seconds.",
+        ]
+    elif scenario == "defend" and kind == "review_theme_emerged":
+        pool = [
+            "Reply YES — I send the response script + GBP post draft now.",
+            "YES to the response pack — stops the pattern today.",
+            "On YES, response draft goes out before the next review posts.",
+        ]
+    elif urgency == "high" or stage >= 3:
         pool = [
             "Reply YES — this needs to go out today.",
             f"On YES, I send it now{_l}.",
-            "YES to act before the window closes?",
+            "YES to act before the window closes.",
         ]
     elif stage == 2:
         pool = [
@@ -323,38 +367,33 @@ def _cta(scenario, offer=None, locality="", urgency="medium", stage=1, merchant_
     elif scenario == "recovery":
         pool = [
             f"Reply YES — I send {_o} for the recovery push.",
-            f"YES to a 7-day recovery push{_l}?",
+            f"YES to a 7-day recovery push{_l}.",
             "On YES, I send the recovery draft now.",
         ]
     elif scenario == "festival":
         pool = [
-            "YES to a festive campaign draft now?",
+            "YES to a festive campaign draft now.",
             "Reply YES — campaign copy ready in 2 min.",
             "On YES, draft goes out today.",
         ]
     elif scenario == "defend":
         pool = [
             "Reply YES and I send a counter-offer this week.",
-            "YES to a local defence offer now?",
+            "YES to a local defence offer now.",
             "On YES, I draft the counter-positioning post.",
         ]
     elif scenario == "winback":
+        cohort = context or "your lapsed cohort"
         pool = [
-            "Reply YES — lapsed outreach goes out now.",
-            "YES to a targeted comeback sequence?",
-            "On YES, I send the reactivation draft.",
-        ]
-    elif scenario == "compliance":
-        pool = [
-            "Reply CONFIRM — I send the checklist now.",
-            "CONFIRM to execute the deadline steps.",
-            "On CONFIRM, I dispatch it immediately.",
+            f"Reply YES — comeback offer goes to {cohort} this week.",
+            "YES to targeted reactivation — 30-day window is the highest-convert rate.",
+            "On YES, I send the outreach now before the 45-day cold window closes.",
         ]
     elif scenario == "scale":
         pool = [
-            "Reply YES — I scale this with a 5-day variant.",
-            "YES to capture this momentum window?",
-            "On YES, scaling draft goes out now.",
+            "Reply YES — I send the amplification post while this signal is live.",
+            "YES to capture this momentum window.",
+            "On YES, celebration post + review template go out now.",
         ]
     elif scenario == "verify":
         pool = [
@@ -365,13 +404,13 @@ def _cta(scenario, offer=None, locality="", urgency="medium", stage=1, merchant_
     elif scenario == "digest":
         pool = [
             "Reply YES — I turn this into a ready-to-post draft.",
-            "YES to a merchant-ready summary + post?",
+            "YES to a merchant-ready summary + post.",
             "On YES, draft goes out now.",
         ]
     else:
         pool = [
             "Reply YES to proceed.",
-            "YES to send the draft now?",
+            "YES to send the draft now.",
             "On YES, I execute this immediately.",
         ]
     # ROI uplift override: replace first pool variant with a concrete payoff framing
@@ -946,8 +985,12 @@ def why_now_hook(signals, tier):
         try:
             gap_pp = float(ctr_gap) * 100
             if abs(gap_pp) >= 0.5:
+                label = _ctr_label(slug)
                 direction = "below" if gap_pp < 0 else "above"
-                return f"{prefix}CTR sits at {ctr*100:.1f}% in {locality} — {abs(gap_pp):.1f}pp {direction} local peers at {peer_ctr*100:.1f}%."
+                return (
+                    f"{prefix}Your {label} sits at {ctr*100:.1f}% in {locality} — "
+                    f"{abs(gap_pp):.1f}pp {direction} local peers at {peer_ctr*100:.1f}%."
+                )
         except (TypeError, ValueError): pass
 
     # 4. Calls + views together
@@ -1518,9 +1561,9 @@ def compose_review_theme(category, merchant, trigger, signals, tier, stage):
         if is_delivery:
             hook = f"{owner}, \"{theme}\" appears {occ_txt} in your {locality} delivery reviews.".lstrip(", ")
             consequence = (
-                f"{trend_prefix}Delivery-specific complaints suppress your ranking in Swiggy/Zomato-adjacent searches "
-                f"and reduce repeat order rate — a templated reply + one corrective GBP post addresses "
-                f"both the rank signal and the customer perception before it compounds."
+                f"{trend_prefix}Each unanswered delivery complaint reduces your aggregate rating by ~0.02 stars "
+                f"— at 4+ occurrences Google Maps deprioritises your listing in local food searches. "
+                f"A templated reply to each review + one corrective GBP post stops the rating slide before it crosses that threshold."
             )
         else:
             hook = f"{owner}, \"{theme}\" appears {occ_txt} in your {locality} reviews.".lstrip(", ")
@@ -1550,33 +1593,13 @@ def compose_review_theme(category, merchant, trigger, signals, tier, stage):
 
     # Social proof — directly addresses the "what should I do?" decision quality gap
     social = _get_social_proof(slug, "review_theme", locality, n=3)
-
-    # Curiosity + ask lever — big engagement miss per brief
-    ask = "Want the ready-to-send response draft + one GBP post — takes 5 minutes to apply?"
     cta_line = _cta("defend", urgency="high", stage=stage, merchant_id=mid, kind="review_theme_emerged")
 
-    # Assemble: hook → consequence → social proof → ask/CTA
-    # Keep to 3 sentences max; drop social if consequence is already long
+    # Assemble: hook → consequence → [social proof] → CTA (no interrogative ask — declare, don't ask)
     if social:
         return _join(hook, consequence, social, cta_line)
-    return _join(hook, consequence, ask, cta_line)
+    return _join(hook, consequence, cta_line)
 
-
-def compose_milestone(category, merchant, trigger, signals, tier, stage):
-    ms = signals.get("merchant_state") or {}
-    offer = ms.get("active_offer")
-    locality = ms.get("locality", "your area")
-    mid = ms.get("merchant_id", "")
-    owner = signals.get("owner_name", "")
-    payload = signals.get("payload") or {}
-    metric = payload.get("metric") or "milestone"
-    value_now = payload.get("value_now")
-    milestone_value = payload.get("milestone_value")
-
-    if value_now and milestone_value:
-        hook = f"{owner}, strong signal on {metric} in {locality}: at {value_now}, with {milestone_value} as the next milestone.".lstrip(", ")
-    else:
-        hook = f"{owner}, momentum milestone hit on {metric} in {locality}.".lstrip(", ")
 
 def compose_milestone(category, merchant, trigger, signals, tier, stage):
     ms = signals.get("merchant_state") or {}
@@ -1590,10 +1613,25 @@ def compose_milestone(category, merchant, trigger, signals, tier, stage):
     value_now = payload.get("value_now")
     milestone_value = payload.get("milestone_value")
 
-    if value_now and milestone_value:
-        hook = f"{owner}, strong signal on {metric} in {locality}: at {value_now}, with {milestone_value} as the next milestone.".lstrip(", ")
+    if metric == "review_count" and value_now and milestone_value:
+        noun = _customer_noun(slug)
+        hook = (
+            f"{owner}, {compact_num(int(value_now))} {noun[:-1] if noun.endswith('s') else noun} reviews in {locality} "
+            f"put you above most {slug.replace('_',' ')} listings — "
+            f"{compact_num(int(milestone_value))}+ reviews unlocks Priority Listing status."
+        ).lstrip(", ")
+    elif value_now and milestone_value:
+        label = metric.replace("_", " ")
+        try:
+            hook = (
+                f"{owner}, you've hit {compact_num(int(value_now))} {label} in {locality} — "
+                f"{compact_num(int(milestone_value))} is the threshold for featured placement."
+            ).lstrip(", ")
+        except (TypeError, ValueError):
+            hook = f"{owner}, you've crossed a visibility milestone in {locality} on {label}.".lstrip(", ")
     else:
-        hook = f"{owner}, momentum milestone hit on {metric} in {locality}.".lstrip(", ")
+        label = metric.replace("_", " ")
+        hook = f"{owner}, you've crossed a {label} milestone in {locality} — your listing is now in the top visibility tier.".lstrip(", ")
 
     # Peer percentile framing — addresses "Category Fit" and "Engagement" gaps
     peer_stats = category.get("peer_stats") or {}
@@ -1615,15 +1653,12 @@ def compose_milestone(category, merchant, trigger, signals, tier, stage):
     else:
         peer_line = _get_social_proof(slug, "milestone", locality, pct=30)
 
-    action = "A celebration post + review-reply template now converts this into visible social proof before the signal fades."
-
-    # Curiosity lever — "want to see which reviews are driving this?"
-    curiosity = "Want to see which review topics are driving this — and the top 3 GBP phrases to amplify them?"
+    action = "A celebration post + review-reply template now converts this momentum into visible social proof before the signal fades."
 
     cta_line = _cta("scale", offer, locality, stage=stage, merchant_id=mid, kind="milestone_reached")
     if peer_line:
         return _join(hook, peer_line, action, cta_line)
-    return _join(hook, action, curiosity, cta_line)
+    return _join(hook, action, cta_line)
 
 
 def compose_winback_eligible(category, merchant, trigger, signals, tier, stage):
@@ -1640,49 +1675,42 @@ def compose_winback_eligible(category, merchant, trigger, signals, tier, stage):
 
     streak = ms.get("no_reply_streak", 0)
     callback = _stage_callback(stage, "winback opportunity", no_reply_streak=streak)
-    lapse_txt = f"{lapse} lapsed customers" if lapse else "a lapsed customer cohort"
+    noun = _customer_noun(slug)
+    lapse_txt = f"{lapse} lapsed {noun}" if lapse else f"a lapsed {noun} cohort"
     expiry_txt = f" ({expiry_days} days since your last offer)" if expiry_days else ""
     hook = f"{owner}, {lapse_txt} have accumulated{expiry_txt} — this is the easiest recoverable revenue you have.".lstrip(", ")
 
-    # Fix W1: strategy drives the action sentence
+    # Strategy drives the action sentence
     if strategy == "comeback_offer" and offer:
-        # Lead with offer title — it's the reactivation hook
         if slug == "dentists":
             action = f'"{offer}" as a lapsed-patient recall incentive is the fastest reactivation path — 20-35% convert in the first 30-day window.'
         elif slug == "salons":
-            action = f'"{offer}" with one reserved slot option converts 25-40% of lapsed clients back in the first pass.'
+            action = f'"{offer}" with one reserved slot option converts 25-40% of lapsed {noun} back in the first pass.'
         else:
             action = f'"{offer}" sent directly to this cohort this week reaches them before the 45-day cold window closes.'
     elif strategy == "lapse_reactivation":
-        # Lead with the cohort size and the conversion rate
         if slug == "dentists":
-            action = "Targeted recall outreach with a one-time checkup incentive converts 20-35% of lapsed patients in the first 30-day window — after that the rate drops sharply."
+            action = f"Targeted recall outreach with a one-time checkup incentive converts 20-35% of lapsed {noun} in the first 30-day window — after that the rate drops sharply."
         elif slug == "restaurants":
-            action = "A direct comeback message to this cohort this week reaches them while the relationship is still warm — waiting past 45 days cuts response rate by half."
+            action = f"A direct comeback message to this cohort this week reaches your {noun} while the relationship is still warm — waiting past 45 days cuts response rate by half."
         elif slug == "salons":
-            action = "A lapsed-client reactivation offer with one slot option converts 25-40% back — the first 30 days post-lapse are the highest-leverage window."
+            action = f"A lapsed-{noun} reactivation offer with one slot option converts 25-40% back — the first 30 days post-lapse are the highest-leverage window."
         else:
-            action = "A targeted reactivation message this week reaches them before the 45-day cold window closes — after that re-acquisition costs 4x more."
+            action = f"A targeted reactivation message this week reaches your {noun} before the 45-day cold window closes — after that re-acquisition costs 4x more."
     else:  # dormant_restart
         action = (
             ('A 2-message reactivation plan built around "' + offer + '" can restart momentum this week.' if offer
              else "A 2-message reactivation plan with one concrete service+price anchor can restart momentum this week.")
         )
 
-    # Social proof — fills the "Category Fit" gap by grounding conversion rates in vertical data
     social = _get_social_proof(slug, "winback", locality)
-
-    # Curiosity lever: "Want to see the list?" — one of the brief's top missed compulsion levers
-    if lapse and int(lapse) > 0:
-        curiosity = f"Want me to pull the full lapsed list and draft the outreach now?"
-    else:
-        curiosity = "Want the ready-to-send reactivation draft?"
-
-    cta_line = _cta("winback", offer, locality, stage=stage, merchant_id=mid, kind="winback_eligible")
+    cta_context = f"all {lapse} {noun}" if lapse else noun
+    cta_line = _cta("winback", offer, locality, stage=stage, merchant_id=mid, kind="winback_eligible",
+                    context=cta_context)
 
     if social:
         return _join(callback, hook, action, social, cta_line)
-    return _join(callback, hook, action, curiosity, cta_line)
+    return _join(callback, hook, action, cta_line)
 
 
 def compose_gbp_unverified(category, merchant, trigger, signals, tier, stage):
