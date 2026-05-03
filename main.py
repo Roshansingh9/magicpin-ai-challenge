@@ -1,8 +1,4 @@
-"""FastAPI bot server for the magicpin Vera challenge.
 
-Run:  python bot.py
-or:   uvicorn bot:app --host 0.0.0.0 --port 8080
-"""
 
 from __future__ import annotations
 
@@ -561,7 +557,7 @@ def main() -> None:
     import uvicorn
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8080"))
-    uvicorn.run("bot:app", host=host, port=port, reload=False, access_log=False)
+    uvicorn.run("main:app", host=host, port=port, reload=False, access_log=False)
 
 
 if __name__ == "__main__":
